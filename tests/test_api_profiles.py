@@ -123,3 +123,36 @@ def test_profile_list_filter_by_state(api_key, campaign, fake_session):
     assert response.status_code == 200
     public_ids = [p["public_id"] for p in response.data]
     assert "state-filter-test" in public_ids
+
+
+@pytest.mark.django_db
+def test_profile_list_filter_by_campaign_id(api_key, campaign, fake_session):
+    """?campaign_id=<id> must return only leads belonging to that campaign."""
+    from crm.models import Lead
+    from linkedin.db.crm_profiles import public_id_to_url, _get_lead_source
+
+    # Create a lead associated with the campaign's department
+    clean_url = public_id_to_url("campaign-filter-test")
+    Lead.objects.create(
+        website=clean_url,
+        owner=fake_session.django_user,
+        department=campaign.department,
+        lead_source=_get_lead_source(fake_session),
+    )
+
+    request = _make_request("get", api_key, path=f"/?campaign_id={campaign.pk}")
+    view = ProfileListView.as_view()
+    response = view(request)
+    assert response.status_code == 200
+    public_ids = [p["public_id"] for p in response.data]
+    assert "campaign-filter-test" in public_ids
+
+
+@pytest.mark.django_db
+def test_profile_list_filter_campaign_id_non_integer(api_key, campaign):
+    """?campaign_id=abc must return 400 with a descriptive error."""
+    request = _make_request("get", api_key, path="/?campaign_id=abc")
+    view = ProfileListView.as_view()
+    response = view(request)
+    assert response.status_code == 400
+    assert response.data == {"error": "campaign_id must be an integer"}

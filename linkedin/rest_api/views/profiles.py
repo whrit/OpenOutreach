@@ -80,7 +80,14 @@ class ProfileListView(APIView):
 
         campaign_id = request.query_params.get("campaign_id")
         if campaign_id:
-            qs = qs.filter(department__campaign__id=campaign_id)
+            try:
+                campaign_id = int(campaign_id)
+            except (ValueError, TypeError):
+                return Response(
+                    {"error": "campaign_id must be an integer"},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            qs = qs.filter(department__department__campaign__id=campaign_id)
 
         data = [_lead_to_dict(lead) for lead in qs[:200]]
         return Response(data)
