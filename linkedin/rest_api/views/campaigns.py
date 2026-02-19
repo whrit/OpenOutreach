@@ -61,6 +61,11 @@ class CampaignDetailView(APIView):
         # read-only fields cannot be modified even if the serializer were to
         # relax its read_only_fields in the future.
         allowed_data = {k: v for k, v in request.data.items() if k in _PATCHABLE_FIELDS}
+        if not allowed_data:
+            return Response(
+                {"error": "No patchable fields provided."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
         serializer = CampaignSerializer(campaign, data=allowed_data, partial=True)
         if not serializer.is_valid():

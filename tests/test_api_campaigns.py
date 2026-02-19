@@ -113,13 +113,32 @@ def test_campaign_patch_updates_fields(api_key, campaign):
 
 
 @pytest.mark.django_db
-def test_campaign_patch_not_found(api_key):
-    """PATCH /campaigns/99999/ returns 404 when no such campaign exists."""
+def test_campaign_patch_not_found(api_key, campaign):
+    """PATCH /campaigns/{nonexistent_pk}/ returns 404 when no such campaign exists."""
+    nonexistent_pk = campaign.pk + 99999
     data = {"product_docs": "Should not matter"}
-    request = _make_request("patch", api_key, path="/campaigns/99999/", data=data)
+    request = _make_request("patch", api_key, path=f"/campaigns/{nonexistent_pk}/", data=data)
     view = CampaignDetailView.as_view()
-    response = view(request, pk=99999)
+    response = view(request, pk=nonexistent_pk)
     assert response.status_code == 404
+
+
+@pytest.mark.django_db
+def test_campaign_patch_no_patchable_fields(fake_session):
+    """PATCH with only non-patchable fields returns 400."""
+    campaign = fake_session.campaign
+    _, raw = ApiKey.generate("test")
+    factory = APIRequestFactory()
+    request = factory.patch(
+        f"/campaigns/{campaign.pk}/",
+        {"is_partner": True, "action_fraction": 0.5},
+        format="json",
+        HTTP_AUTHORIZATION=f"Api-Key {raw}",
+    )
+    view = CampaignDetailView.as_view()
+    response = view(request, pk=campaign.pk)
+    assert response.status_code == 400
+    assert "error" in response.data
 
 
 @pytest.mark.django_db
