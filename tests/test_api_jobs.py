@@ -134,7 +134,7 @@ def test_job_list_filter_by_status(api_key, campaign):
     # Create one completed job
     job3 = ActionJob.objects.create(lane="qualify", campaign=campaign, status="completed")
 
-    request = _make_request("get", api_key, path="/jobs/?status=pending")
+    request = _make_request("get", api_key, path="/jobs/", data={"status": "pending"})
     view = JobListView.as_view()
     response = view(request)
 
@@ -143,6 +143,18 @@ def test_job_list_filter_by_status(api_key, campaign):
     assert job1.pk in returned_ids
     assert job2.pk in returned_ids
     assert job3.pk not in returned_ids
+
+
+@pytest.mark.django_db
+def test_job_list_invalid_status(fake_session):
+    """?status=invalid_value returns 400."""
+    _, raw = ApiKey.generate("test")
+    factory = APIRequestFactory()
+    request = factory.get("/jobs/", data={"status": "bogus"}, HTTP_AUTHORIZATION=f"Api-Key {raw}")
+    view = JobListView.as_view()
+    response = view(request)
+    assert response.status_code == 400
+    assert "error" in response.data
 
 
 @pytest.mark.django_db

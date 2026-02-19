@@ -8,6 +8,7 @@ from linkedin.rest_api.permissions import HasApiKey
 from linkedin.rest_api.serializers import ActionJobSerializer, LaneTriggerSerializer
 
 _VALID_LANES = [choice[0] for choice in ActionJob.LANE_CHOICES]
+VALID_STATUSES = {choice[0] for choice in ActionJob.STATUS_CHOICES}
 
 
 class LaneTriggerView(APIView):
@@ -78,6 +79,11 @@ class JobListView(APIView):
 
         status_filter = request.query_params.get("status")
         if status_filter is not None:
+            if status_filter not in VALID_STATUSES:
+                return Response(
+                    {"error": f"Invalid status. Valid values: {sorted(VALID_STATUSES)}"},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
             qs = qs.filter(status=status_filter)
 
         serializer = ActionJobSerializer(qs, many=True)
