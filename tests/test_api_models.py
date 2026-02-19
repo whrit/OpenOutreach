@@ -51,3 +51,20 @@ def test_webhook_subscription_defaults(fake_session):
     )
     assert ws.active is True
     assert ws.pk is not None
+
+
+@pytest.mark.django_db
+def test_webhook_subscription_events_default(fake_session):
+    from linkedin.models import WebhookSubscription
+    ws = WebhookSubscription.objects.create(
+        url="https://example.com/default-events",
+        campaign=fake_session.campaign,
+    )
+    assert ws.events == []
+
+
+@pytest.mark.django_db
+def test_action_job_null_campaign():
+    job = ActionJob.objects.create(lane="search", campaign=None)
+    assert job.pk is not None
+    assert ActionJob.objects.filter(campaign__isnull=True).count() >= 1
