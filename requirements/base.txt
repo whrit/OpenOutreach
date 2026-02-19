@@ -16,3 +16,4 @@ duckdb
 fastembed
 scikit-learn
 huggingface_hub
+djangorestframework>=3.15,<4

@@ -50,6 +50,8 @@ INSTALLED_APPS = [
     "settings",
     "quality",
     "linkedin",
+    "rest_framework",
+    "linkedin.rest_api",
 ]
 
 MIDDLEWARE = [
