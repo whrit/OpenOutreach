@@ -46,7 +46,10 @@ class WebhookListCreateView(APIView):
             )
 
         # --- Resolve campaign FK (optional) ---
-        campaign_id = request.data.get("campaign_id")
+        # Read from validated_data to guarantee an integer (or None); reading
+        # from request.data directly could yield a string or other non-integer
+        # type, causing the ORM to raise ValueError instead of DoesNotExist.
+        campaign_id = serializer.validated_data.get("campaign_id")
         campaign = None
         if campaign_id is not None:
             try:

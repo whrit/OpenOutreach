@@ -1,4 +1,5 @@
 """Tests for webhook register/delete views and dispatch helper."""
+import time
 import pytest
 from unittest.mock import patch, MagicMock
 from rest_framework.test import APIRequestFactory
@@ -197,6 +198,8 @@ def test_dispatch_webhooks_delivers_to_matching_subscription(campaign):
     with patch("linkedin.rest_api.webhooks.httpx.Client", mock_client_cls):
         from linkedin.rest_api.webhooks import dispatch_webhooks
         dispatch_webhooks("job.completed", job)
+        # dispatch_webhooks is non-blocking — wait for daemon thread to finish.
+        time.sleep(0.2)
 
     mock_client_instance.post.assert_called_once()
     call_kwargs = mock_client_instance.post.call_args
@@ -233,5 +236,48 @@ def test_dispatch_webhooks_skips_inactive_subscription(campaign):
     with patch("linkedin.rest_api.webhooks.httpx.Client", mock_client_cls):
         from linkedin.rest_api.webhooks import dispatch_webhooks
         dispatch_webhooks("job.completed", job)
+        # No thread is spawned when there are no matching subscriptions.
+        # Sleep briefly to confirm nothing fires.
+        time.sleep(0.1)
+
+    mock_client_instance.post.assert_not_called()
+
+
+@pytest.mark.django_db
+def test_dispatch_webhooks_ignores_different_campaign(fake_session):
+    """A subscription scoped to campaign A should not fire when the job belongs to campaign B."""
+    from common.models import Department
+    from django.contrib.auth.models import Group
+
+    # Create a second campaign by creating a new Department (Django CRM uses MTI).
+    group_b, _ = Group.objects.get_or_create(name="CampaignB-Group")
+    dept_b, _ = Department.objects.get_or_create(id=group_b.id, defaults={"name": "CampaignB-Group"})
+    campaign_b, _ = Campaign.objects.get_or_create(department=dept_b)
+
+    campaign_a = fake_session.campaign
+
+    # Subscription tied to campaign_b.
+    WebhookSubscription.objects.create(
+        url="https://example.com/hook-b",
+        events=["job.completed"],
+        campaign=campaign_b,
+        active=True,
+    )
+
+    # Job for campaign_a — subscription for campaign_b should NOT fire.
+    job = ActionJob.objects.create(
+        lane="search",
+        campaign=campaign_a,
+    )
+
+    mock_client_instance = MagicMock()
+    mock_client_cls = MagicMock(return_value=mock_client_instance)
+    mock_client_instance.__enter__ = MagicMock(return_value=mock_client_instance)
+    mock_client_instance.__exit__ = MagicMock(return_value=False)
+
+    with patch("linkedin.rest_api.webhooks.httpx.Client", mock_client_cls):
+        from linkedin.rest_api.webhooks import dispatch_webhooks
+        dispatch_webhooks("job.completed", job)
+        time.sleep(0.1)
 
     mock_client_instance.post.assert_not_called()

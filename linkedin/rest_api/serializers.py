@@ -51,6 +51,12 @@ class LaneTriggerSerializer(serializers.Serializer):
 
 
 class WebhookSerializer(serializers.ModelSerializer):
+    # Explicitly declare campaign_id as a writable integer field.
+    # Without this, DRF ModelSerializer generates campaign_id as ReadOnlyField
+    # (the _id suffix of a FK is not writable by default), which means it would
+    # never appear in validated_data and campaign filtering would be silently skipped.
+    campaign_id = serializers.IntegerField(required=False, allow_null=True)
+
     class Meta:
         model = WebhookSubscription
         fields = ["id", "url", "events", "campaign_id", "active", "created_at"]
