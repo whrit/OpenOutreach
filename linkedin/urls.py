@@ -8,6 +8,7 @@ urlpatterns = [
     path("crm/", include("crm.urls")),
     path("crm/", include("common.urls")),
     path("admin/", admin.site.urls),
+    path("api/v1/", include("linkedin.rest_api.urls")),
 ]
 
 urlpatterns += static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)
