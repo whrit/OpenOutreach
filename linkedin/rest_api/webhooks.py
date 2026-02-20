@@ -25,7 +25,7 @@ def dispatch_webhooks(event: str, job: ActionJob) -> None:
         "lane": job.lane,
         "campaign_id": job.campaign_id,
         "result": job.result,
-        "timestamp": datetime.datetime.utcnow().isoformat() + "Z",
+        "timestamp": datetime.datetime.now(datetime.timezone.utc).isoformat().replace("+00:00", "Z"),
     }
 
     # Perform the DB query on the calling thread before spawning.
