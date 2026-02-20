@@ -1,4 +1,6 @@
 import {
+  IAuthenticateGeneric,
+  ICredentialTestRequest,
   ICredentialType,
   INodeProperties,
 } from 'n8n-workflow';
@@ -7,6 +9,24 @@ export class OpenOutreachApi implements ICredentialType {
   name = 'openOutreachApi';
   displayName = 'OpenOutreach API';
   documentationUrl = 'https://github.com/eracle/OpenOutreach';
+  icon = 'file:openoutreach.svg' as ICredentialType['icon'];
+  authenticate: IAuthenticateGeneric = {
+    type: 'generic',
+    properties: {
+      headers: {
+        Authorization: '=Api-Key {{$credentials.apiKey}}',
+      },
+    },
+  };
+  test: ICredentialTestRequest = {
+    request: {
+      baseURL: '={{$credentials.baseUrl}}',
+      url: '/api/v1/campaigns/',
+      headers: {
+        Authorization: '=Api-Key {{$credentials.apiKey}}',
+      },
+    },
+  };
   properties: INodeProperties[] = [
     {
       displayName: 'Base URL',

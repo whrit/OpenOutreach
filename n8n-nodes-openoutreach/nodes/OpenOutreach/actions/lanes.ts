@@ -13,6 +13,7 @@ export const lanesOperations: INodeProperties[] = [
 				name: 'Trigger',
 				value: 'trigger',
 				description: 'Queue a lane action for the daemon to execute',
+				action: 'Trigger a lane',
 			},
 		],
 		default: 'trigger',
@@ -27,8 +28,8 @@ export const lanesFields: INodeProperties[] = [
 		required: true,
 		displayOptions: { show: { resource: ['lanes'], operation: ['trigger'] } },
 		options: [
-			{ name: 'Connect', value: 'connect' },
 			{ name: 'Check Pending', value: 'check_pending' },
+			{ name: 'Connect', value: 'connect' },
 			{ name: 'Follow Up', value: 'follow_up' },
 			{ name: 'Qualify', value: 'qualify' },
 			{ name: 'Search', value: 'search' },

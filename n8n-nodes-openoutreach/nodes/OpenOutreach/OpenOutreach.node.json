@@ -1,0 +1,11 @@
+{
+  "node": "n8n-nodes-openoutreach.openOutreach",
+  "nodeVersion": "1.0",
+  "codexVersion": "1.0",
+  "categories": ["Marketing"],
+  "resources": {
+    "primaryDocumentation": [
+      { "url": "https://github.com/eracle/OpenOutreach" }
+    ]
+  }
+}

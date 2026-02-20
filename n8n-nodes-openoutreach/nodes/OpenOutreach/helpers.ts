@@ -1,4 +1,4 @@
-import { IDataObject, IExecuteFunctions, ILoadOptionsFunctions } from 'n8n-workflow';
+import { IDataObject, IExecuteFunctions, ILoadOptionsFunctions, sleep } from 'n8n-workflow';
 
 /**
  * Make an authenticated request to the OpenOutreach REST API.
@@ -64,7 +64,7 @@ export async function pollJobUntilDone(
 			return job;
 		}
 
-		await new Promise<void>((resolve) => setTimeout(resolve, intervalMs));
+		await sleep(intervalMs);
 	}
 
 	throw new Error(`Job ${jobId} timed out after ${timeoutMs / 1000}s`);

@@ -9,8 +9,8 @@ export const jobsOperations: INodeProperties[] = [
 		noDataExpression: true,
 		displayOptions: { show: { resource: ['jobs'] } },
 		options: [
-			{ name: 'Get', value: 'get', description: 'Get a single job by ID' },
-			{ name: 'Get Many', value: 'getMany', description: 'List jobs with optional status filter' },
+			{ name: 'Get', value: 'get', description: 'Get a single job by ID', action: 'Get a job' },
+			{ name: 'Get Many', value: 'getMany', description: 'List jobs with optional status filter', action: 'Get many jobs' },
 		],
 		default: 'get',
 	},
@@ -33,10 +33,10 @@ export const jobsFields: INodeProperties[] = [
 		displayOptions: { show: { resource: ['jobs'], operation: ['getMany'] } },
 		options: [
 			{ name: 'All', value: '' },
-			{ name: 'Pending', value: 'pending' },
-			{ name: 'Running', value: 'running' },
 			{ name: 'Completed', value: 'completed' },
 			{ name: 'Failed', value: 'failed' },
+			{ name: 'Pending', value: 'pending' },
+			{ name: 'Running', value: 'running' },
 		],
 		default: '',
 		description: 'Filter jobs by status (leave blank for all)',

@@ -9,9 +9,9 @@ export const campaignsOperations: INodeProperties[] = [
 		noDataExpression: true,
 		displayOptions: { show: { resource: ['campaigns'] } },
 		options: [
-			{ name: 'Get Many', value: 'getMany', description: 'List all campaigns' },
-			{ name: 'Get', value: 'get', description: 'Get a single campaign by ID' },
-			{ name: 'Update', value: 'update', description: 'Update campaign fields' },
+			{ name: 'Get', value: 'get', description: 'Get a single campaign by ID', action: 'Get a campaign' },
+			{ name: 'Get Many', value: 'getMany', description: 'List all campaigns', action: 'Get many campaigns' },
+			{ name: 'Update', value: 'update', description: 'Update campaign fields', action: 'Update a campaign' },
 		],
 		default: 'getMany',
 	},
