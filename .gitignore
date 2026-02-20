@@ -40,3 +40,8 @@ assets/models/
 /assets/campaign/product_docs.txt
 /venv/
 /linkedin/management/commands/export_model.py
+
+# n8n node package
+n8n-nodes-openoutreach/node_modules/
+n8n-nodes-openoutreach/dist/
+n8n-nodes-openoutreach/package-lock.json
