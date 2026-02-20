@@ -21,3 +21,13 @@ def test_drf_json_renderer_only():
 
 def test_drf_unauthenticated_user_none():
     assert settings.REST_FRAMEWORK.get("UNAUTHENTICATED_USER") is None
+
+
+def test_throttle_class_configured():
+    auth_classes = settings.REST_FRAMEWORK.get("DEFAULT_THROTTLE_CLASSES", [])
+    assert any("ApiKeyThrottle" in c for c in auth_classes)
+
+
+def test_throttle_rate_configured():
+    rates = settings.REST_FRAMEWORK.get("DEFAULT_THROTTLE_RATES", {})
+    assert "api_key" in rates

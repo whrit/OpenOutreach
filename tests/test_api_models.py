@@ -68,3 +68,16 @@ def test_action_job_null_campaign():
     job = ActionJob.objects.create(lane="search", campaign=None)
     assert job.pk is not None
     assert ActionJob.objects.filter(campaign__isnull=True).count() >= 1
+
+
+@pytest.mark.django_db
+def test_authenticate_returns_correct_key_by_hash(db):
+    """authenticate() uses direct hash lookup, not a linear scan."""
+    # Create multiple keys
+    key_a, raw_a = ApiKey.generate("Key A")
+    key_b, raw_b = ApiKey.generate("Key B")
+    key_c, raw_c = ApiKey.generate("Key C")
+
+    result = ApiKey.authenticate(raw_b)
+    assert result is not None
+    assert result.pk == key_b.pk

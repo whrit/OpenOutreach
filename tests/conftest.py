@@ -9,6 +9,15 @@ from tests.factories import UserFactory
 
 
 @pytest.fixture(autouse=True)
+def _clear_cache():
+    """Clear Django cache between tests to prevent throttle state bleeding."""
+    from django.core.cache import cache
+    cache.clear()
+    yield
+    cache.clear()
+
+
+@pytest.fixture(autouse=True)
 def _ensure_crm_data(db):
     """
     Ensure CRM bootstrap data exists before every test.

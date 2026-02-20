@@ -88,12 +88,8 @@ class ApiKey(models.Model):
 
     @classmethod
     def authenticate(cls, raw_token: str) -> "ApiKey | None":
-        import hmac
         candidate_hash = hashlib.sha256(raw_token.encode()).hexdigest()
-        for obj in cls.objects.filter(active=True):
-            if hmac.compare_digest(obj.key_hash, candidate_hash):
-                return obj
-        return None
+        return cls.objects.filter(active=True, key_hash=candidate_hash).first()
 
 
 class ActionJob(models.Model):

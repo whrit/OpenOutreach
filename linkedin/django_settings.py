@@ -25,11 +25,18 @@ DATA_DIR.mkdir(parents=True, exist_ok=True)
 
 BASE_DIR = ROOT_DIR
 
-SECRET_KEY = "openoutreach-local-dev-key-change-in-production"
-
-DEBUG = True
-
-ALLOWED_HOSTS = ["*"]
+# Security settings — override via environment variables in production
+SECRET_KEY = os.environ.get(
+    "DJANGO_SECRET_KEY",
+    "openoutreach-local-dev-key-change-in-production",  # dev fallback only
+)
+DEBUG = os.environ.get("DJANGO_DEBUG", "false").lower() == "true"
+_allowed_hosts_env = os.environ.get("DJANGO_ALLOWED_HOSTS", "")
+ALLOWED_HOSTS = (
+    [h.strip() for h in _allowed_hosts_env.split(",") if h.strip()]
+    if _allowed_hosts_env
+    else ["localhost", "127.0.0.1", "testserver"]  # dev/test defaults
+)
 
 INSTALLED_APPS = [
     "django.contrib.sites",
@@ -65,6 +72,12 @@ REST_FRAMEWORK = {
         "rest_framework.renderers.JSONRenderer",
     ],
     "UNAUTHENTICATED_USER": None,
+    "DEFAULT_THROTTLE_CLASSES": [
+        "linkedin.rest_api.throttling.ApiKeyThrottle",
+    ],
+    "DEFAULT_THROTTLE_RATES": {
+        "api_key": "120/minute",  # Override with DJANGO_API_THROTTLE_RATE env var if needed
+    },
 }
 
 MIDDLEWARE = [
