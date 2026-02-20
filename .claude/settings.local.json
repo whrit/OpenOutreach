@@ -2,7 +2,11 @@
   "permissions": {
     "allow": [
       "Bash(git add:*)",
-      "Bash(git commit:*)"
+      "Bash(git commit:*)",
+      "Bash(.venv/bin/python:*)",
+      "Bash(.venv/bin/pip show:*)",
+      "Bash(uv pip install:*)",
+      "Bash(DJANGO_SETTINGS_MODULE=linkedin.django_settings .venv/bin/python:*)"
     ]
   }
 }

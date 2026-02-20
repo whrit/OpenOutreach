@@ -1728,7 +1728,7 @@ export async function executeLanes(this: IExecuteFunctions, i: number): Promise<
 
   if (waitForCompletion) {
     const timeoutSeconds = this.getNodeParameter('timeoutSeconds', i, 300) as number;
-    const result = await pollJobUntilDone(this, String(job.id), timeoutSeconds * 1000);
+    const result = await pollJobUntilDone(this, job.job_id, timeoutSeconds * 1000);  // job_id is already a string (Phase 1 fix)
     return [{ json: result }];
   }
 
