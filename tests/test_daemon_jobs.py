@@ -155,3 +155,62 @@ def test_execute_action_job_unknown_lane(fake_session):
 
     with pytest.raises(ValueError, match="Unknown lane"):
         _execute_action_job(fake_session, job)
+
+
+# ---------------------------------------------------------------------------
+# 7. M3: Null campaign guard — ValueError raised immediately
+# ---------------------------------------------------------------------------
+
+@pytest.mark.django_db
+def test_execute_action_job_null_campaign_raises(fake_session):
+    """_execute_action_job raises ValueError when job has no campaign."""
+    job = ActionJob.objects.create(lane="search", campaign=None)
+    with pytest.raises(ValueError, match="no campaign"):
+        _execute_action_job(fake_session, job)
+
+
+# ---------------------------------------------------------------------------
+# 8. Lane dispatch map — each known lane name calls correct execute()
+# ---------------------------------------------------------------------------
+
+@pytest.mark.django_db
+def test_execute_action_job_dispatches_to_correct_lane(fake_session):
+    """_execute_action_job instantiates and calls the correct lane for each lane choice."""
+    from unittest.mock import patch
+
+    lane_module_map = {
+        "connect": "linkedin.lanes.connect.ConnectLane",
+        "check_pending": "linkedin.lanes.check_pending.CheckPendingLane",
+        "follow_up": "linkedin.lanes.follow_up.FollowUpLane",
+        "qualify": "linkedin.lanes.qualify.QualifyLane",
+        "search": "linkedin.lanes.search.SearchLane",
+    }
+
+    for lane_name, cls_path in lane_module_map.items():
+        job = ActionJob.objects.create(lane=lane_name, campaign=fake_session.campaign)
+
+        with patch(f"{cls_path}.execute", return_value={"done": True}) as mock_execute:
+            result = _execute_action_job(fake_session, job)
+            assert mock_execute.called, f"execute() not called for lane {lane_name!r}"
+            assert result == {"done": True}, f"Unexpected result for lane {lane_name!r}"
+
+
+# ---------------------------------------------------------------------------
+# 9. S2: job.params keyword forwarded to SearchLane.execute()
+# ---------------------------------------------------------------------------
+
+@pytest.mark.django_db
+def test_execute_action_job_forwards_keyword_to_search_lane(fake_session):
+    """_execute_action_job forwards keyword param to SearchLane.execute()."""
+    from unittest.mock import patch
+
+    job = ActionJob.objects.create(
+        lane="search",
+        campaign=fake_session.campaign,
+        params={"keyword": "Head of Growth SaaS"},
+    )
+
+    with patch("linkedin.lanes.search.SearchLane.execute", return_value={"profiles_found": 3}) as mock_exec:
+        result = _execute_action_job(fake_session, job)
+        mock_exec.assert_called_once_with(keyword="Head of Growth SaaS")
+        assert result == {"profiles_found": 3}

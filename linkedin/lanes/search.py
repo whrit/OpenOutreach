@@ -31,9 +31,20 @@ class SearchLane:
             used=False,
         ).exists()
 
-    def execute(self):
+    def execute(self, keyword: str | None = None):
         from linkedin.actions.search import search_people
         from linkedin.models import SearchKeyword
+
+        if keyword is not None:
+            # Keyword provided explicitly via job.params — use it directly
+            # without touching the SearchKeyword DB records.
+            logger.info(
+                colored("▶ search", "magenta", attrs=["bold"])
+                + " keyword=%r (from job params)",
+                keyword,
+            )
+            search_people(self.session, keyword)
+            return
 
         kw = (
             SearchKeyword.objects.filter(

@@ -92,10 +92,11 @@ def _process_action_jobs(session):
 def _execute_action_job(session, job):
     """Map an ActionJob's lane to the corresponding lane execute() call.
 
-    All lane execute() methods have a fixed signature (no parameters beyond
-    self), so job.params is not forwarded to execute(). The params field is
-    available for future use when individual lanes gain parameterised execute()
-    signatures.
+    job.params is forwarded to SearchLane.execute() as keyword arguments.
+    Other lanes have a fixed no-parameter execute() signature; passing an
+    empty dict to them is safe. If a lane receives unexpected keyword
+    arguments it will raise TypeError, which is caught and recorded by
+    _process_action_jobs.
     """
     from linkedin.conf import CAMPAIGN_CONFIG, MODEL_PATH
     from linkedin.lanes.check_pending import CheckPendingLane
@@ -106,8 +107,14 @@ def _execute_action_job(session, job):
     from linkedin.ml.qualifier import BayesianQualifier
     from linkedin.rate_limiter import RateLimiter
 
-    # Always assign campaign from job (may be None; lane handles it)
+    # Always assign campaign from job; guard against None to produce a clear
+    # error instead of a cryptic AttributeError deep inside lane code.
     session.campaign = job.campaign
+    if session.campaign is None:
+        raise ValueError(
+            f"ActionJob {job.pk} has no campaign assigned. "
+            "Cannot execute lane without a campaign context."
+        )
 
     cfg = CAMPAIGN_CONFIG
     lp = session.linkedin_profile
@@ -132,7 +139,10 @@ def _execute_action_job(session, job):
     else:
         raise ValueError(f"Unknown lane: {job.lane!r}")
 
-    # All lane execute() methods have a fixed signature — params not forwarded.
+    # Forward job.params to the search lane; other lanes take no parameters.
+    params = job.params or {}
+    if job.lane == "search":
+        return lane.execute(**params)
     return lane.execute()
 
 
