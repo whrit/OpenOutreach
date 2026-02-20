@@ -33,13 +33,20 @@ def _make_request(method, api_key_tuple, path="/", data=None, **kwargs):
     return request
 
 
+# ---------------------------------------------------------------------------
+# Existing tests — updated for paginated response format
+# ---------------------------------------------------------------------------
+
 @pytest.mark.django_db
 def test_profile_list_empty(api_key, campaign):
     request = _make_request("get", api_key)
     view = ProfileListView.as_view()
     response = view(request)
     assert response.status_code == 200
-    assert response.data == []
+    # Paginated response: check structure keys and that results is an empty list
+    assert "count" in response.data
+    assert "results" in response.data
+    assert response.data["results"] == []
 
 
 @pytest.mark.django_db
@@ -121,7 +128,8 @@ def test_profile_list_filter_by_state(api_key, campaign, fake_session):
     view = ProfileListView.as_view()
     response = view(request)
     assert response.status_code == 200
-    public_ids = [p["public_id"] for p in response.data]
+    # Paginated response: results key holds the list
+    public_ids = [p["public_id"] for p in response.data["results"]]
     assert "state-filter-test" in public_ids
 
 
@@ -144,7 +152,8 @@ def test_profile_list_filter_by_campaign_id(api_key, campaign, fake_session):
     view = ProfileListView.as_view()
     response = view(request)
     assert response.status_code == 200
-    public_ids = [p["public_id"] for p in response.data]
+    # Paginated response: results key holds the list
+    public_ids = [p["public_id"] for p in response.data["results"]]
     assert "campaign-filter-test" in public_ids
 
 
@@ -156,3 +165,152 @@ def test_profile_list_filter_campaign_id_non_integer(api_key, campaign):
     response = view(request)
     assert response.status_code == 400
     assert response.data == {"error": "campaign_id must be an integer"}
+
+
+# ---------------------------------------------------------------------------
+# New pagination tests (A1)
+# ---------------------------------------------------------------------------
+
+@pytest.mark.django_db
+def test_profile_list_pagination_metadata(api_key, campaign):
+    """Profile list response includes pagination metadata."""
+    request = _make_request("get", api_key)
+    view = ProfileListView.as_view()
+    response = view(request)
+    assert response.status_code == 200
+    assert "count" in response.data
+    assert "results" in response.data
+    assert "next" in response.data
+    assert "previous" in response.data
+    assert isinstance(response.data["results"], list)
+
+
+@pytest.mark.django_db
+def test_profile_list_limit_offset(api_key, campaign, fake_session):
+    """?limit and ?offset parameters control which profiles are returned."""
+    from crm.models import Lead
+    from linkedin.db.crm_profiles import public_id_to_url, _get_lead_source
+
+    # Create 5 leads
+    for i in range(5):
+        Lead.objects.create(
+            website=public_id_to_url(f"paginate-user-{i}"),
+            owner=fake_session.django_user,
+            department=campaign.department,
+            lead_source=_get_lead_source(fake_session),
+        )
+
+    _, raw = ApiKey.generate("test-paginate")
+    factory = APIRequestFactory()
+    # Get first 2
+    req1 = factory.get(
+        "/profiles/",
+        data={"limit": 2, "offset": 0},
+        HTTP_AUTHORIZATION=f"Api-Key {raw}",
+    )
+    r1 = ProfileListView.as_view()(req1)
+    assert r1.status_code == 200
+    assert len(r1.data["results"]) == 2
+    # count reflects total leads present (>= 5)
+    assert r1.data["count"] >= 5
+
+
+@pytest.mark.django_db
+def test_profile_list_pagination_next_and_previous(api_key, campaign, fake_session):
+    """next/previous URLs are set correctly based on offset position."""
+    from crm.models import Lead
+    from linkedin.db.crm_profiles import public_id_to_url, _get_lead_source
+
+    for i in range(5):
+        Lead.objects.create(
+            website=public_id_to_url(f"nextprev-user-{i}"),
+            owner=fake_session.django_user,
+            department=campaign.department,
+            lead_source=_get_lead_source(fake_session),
+        )
+
+    _, raw = ApiKey.generate("test-nextprev")
+    factory = APIRequestFactory()
+
+    # With limit=2, offset=2 there should be both next and previous
+    req = factory.get(
+        "/profiles/",
+        data={"limit": 2, "offset": 2},
+        HTTP_AUTHORIZATION=f"Api-Key {raw}",
+    )
+    r = ProfileListView.as_view()(req)
+    assert r.status_code == 200
+    # previous should exist since offset > 0
+    assert r.data["previous"] is not None
+    # count >= 5 means offset 2 + limit 2 = 4 which is < 5, so next should exist
+    if r.data["count"] > 4:
+        assert r.data["next"] is not None
+
+
+@pytest.mark.django_db
+def test_profile_list_invalid_limit(api_key, campaign):
+    """?limit=abc returns 400."""
+    request = _make_request("get", api_key, path="/?limit=abc")
+    view = ProfileListView.as_view()
+    response = view(request)
+    assert response.status_code == 400
+    assert "error" in response.data
+
+
+@pytest.mark.django_db
+def test_profile_list_invalid_offset(api_key, campaign):
+    """?offset=xyz returns 400."""
+    request = _make_request("get", api_key, path="/?offset=xyz")
+    view = ProfileListView.as_view()
+    response = view(request)
+    assert response.status_code == 400
+    assert "error" in response.data
+
+
+# ---------------------------------------------------------------------------
+# New test: happy-path profile detail
+# ---------------------------------------------------------------------------
+
+@pytest.mark.django_db
+def test_profile_detail_returns_existing_profile(fake_session):
+    """GET /profiles/{public_id}/ returns correct data for an existing profile."""
+    from crm.models import Lead
+    from linkedin.db.crm_profiles import url_to_public_id, public_id_to_url
+    from linkedin.rest_api.views.profiles import ProfileDetailView
+
+    lead = Lead.objects.create(
+        website="https://www.linkedin.com/in/happy-path-user/",
+        owner=fake_session.django_user,
+        department=fake_session.campaign.department,
+        first_name="Alice",
+        last_name="Smith",
+    )
+    public_id = url_to_public_id(lead.website)
+    _, raw = ApiKey.generate("test-detail")
+    factory = APIRequestFactory()
+    request = factory.get(f"/profiles/{public_id}/", HTTP_AUTHORIZATION=f"Api-Key {raw}")
+    response = ProfileDetailView.as_view()(request, public_id=public_id)
+    assert response.status_code == 200
+    assert response.data["public_id"] == public_id
+    assert response.data["first_name"] == "Alice"
+    assert response.data["last_name"] == "Smith"
+    assert response.data["url"] == lead.website
+
+
+# ---------------------------------------------------------------------------
+# New test: inject with non-existent campaign_id
+# ---------------------------------------------------------------------------
+
+@pytest.mark.django_db
+def test_profile_inject_campaign_not_found(fake_session):
+    """POST /profiles/ with non-existent campaign_id returns 404."""
+    _, raw = ApiKey.generate("test-no-campaign")
+    factory = APIRequestFactory()
+    request = factory.post(
+        "/profiles/",
+        {"urls": ["https://www.linkedin.com/in/test-user/"], "campaign_id": 99999},
+        format="json",
+        HTTP_AUTHORIZATION=f"Api-Key {raw}",
+    )
+    response = ProfileListView.as_view()(request)
+    assert response.status_code == 404

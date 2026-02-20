@@ -111,18 +111,20 @@ def test_lane_trigger_params_optional(api_key, campaign):
 
 
 # ---------------------------------------------------------------------------
-# JobListView tests
+# JobListView tests — updated for paginated response format
 # ---------------------------------------------------------------------------
 
 @pytest.mark.django_db
 def test_job_list_all(api_key, campaign):
-    """GET /jobs/ returns 200 with a list (may be empty)."""
+    """GET /jobs/ returns 200 with paginated structure."""
     request = _make_request("get", api_key, path="/jobs/")
     view = JobListView.as_view()
     response = view(request)
 
     assert response.status_code == 200
-    assert isinstance(response.data, list)
+    assert "count" in response.data
+    assert "results" in response.data
+    assert isinstance(response.data["results"], list)
 
 
 @pytest.mark.django_db
@@ -139,7 +141,8 @@ def test_job_list_filter_by_status(api_key, campaign):
     response = view(request)
 
     assert response.status_code == 200
-    returned_ids = [int(j["job_id"]) for j in response.data]
+    # Paginated response: results key holds the list
+    returned_ids = [int(j["job_id"]) for j in response.data["results"]]
     assert job1.pk in returned_ids
     assert job2.pk in returned_ids
     assert job3.pk not in returned_ids
@@ -199,3 +202,124 @@ def test_job_detail_not_found(api_key, campaign):
     response = view(request, pk=99999)
 
     assert response.status_code == 404
+
+
+# ---------------------------------------------------------------------------
+# New test: A2 queue overflow protection
+# ---------------------------------------------------------------------------
+
+@pytest.mark.django_db
+def test_lane_trigger_rejects_when_queue_full(fake_session):
+    """POST /lanes/{lane}/trigger/ returns 429 when MAX_PENDING_JOBS is exceeded."""
+    from linkedin.rest_api.views.jobs import _MAX_PENDING_JOBS
+
+    # Fill the queue with pending jobs
+    for _ in range(_MAX_PENDING_JOBS):
+        ActionJob.objects.create(lane="search", campaign=fake_session.campaign, status="pending")
+
+    _, raw = ApiKey.generate("test-overflow")
+    factory = APIRequestFactory()
+    request = factory.post(
+        "/lanes/search/trigger/",
+        {"campaign_id": fake_session.campaign.pk, "params": {}},
+        format="json",
+        HTTP_AUTHORIZATION=f"Api-Key {raw}",
+    )
+    response = LaneTriggerView.as_view()(request, lane="search")
+    assert response.status_code == 429
+    assert "error" in response.data
+
+
+# ---------------------------------------------------------------------------
+# New test: H4 params size validation
+# ---------------------------------------------------------------------------
+
+@pytest.mark.django_db
+def test_lane_trigger_rejects_oversized_params(fake_session):
+    """POST /lanes/{lane}/trigger/ returns 400 when params exceeds 4096 bytes."""
+    _, raw = ApiKey.generate("test-bigparams")
+    factory = APIRequestFactory()
+    big_params = {"key": "x" * 5000}
+    request = factory.post(
+        "/lanes/search/trigger/",
+        {"campaign_id": fake_session.campaign.pk, "params": big_params},
+        format="json",
+        HTTP_AUTHORIZATION=f"Api-Key {raw}",
+    )
+    response = LaneTriggerView.as_view()(request, lane="search")
+    assert response.status_code == 400
+
+
+# ---------------------------------------------------------------------------
+# New test: Location header on 202 trigger response
+# ---------------------------------------------------------------------------
+
+@pytest.mark.django_db
+def test_lane_trigger_response_has_location_header(api_key, campaign):
+    """POST /lanes/{lane}/trigger/ 202 response includes a Location header."""
+    data = {"campaign_id": campaign.pk}
+    request = _make_request("post", api_key, path="/lanes/search/trigger/", data=data)
+    view = LaneTriggerView.as_view()
+    response = view(request, lane="search")
+
+    assert response.status_code == 202
+    assert "Location" in response
+
+
+# ---------------------------------------------------------------------------
+# New test: job_id is a string (serializer fix)
+# ---------------------------------------------------------------------------
+
+@pytest.mark.django_db
+def test_job_list_job_id_is_string(api_key, campaign):
+    """job_id in list results must be a string, not an integer."""
+    ActionJob.objects.create(lane="connect", campaign=campaign, status="pending")
+    request = _make_request("get", api_key, path="/jobs/")
+    response = JobListView.as_view()(request)
+    assert response.status_code == 200
+    for item in response.data["results"]:
+        assert isinstance(item["job_id"], str)
+
+
+@pytest.mark.django_db
+def test_job_detail_job_id_is_string(api_key, campaign):
+    """job_id in detail response must be a string."""
+    job = ActionJob.objects.create(lane="connect", campaign=campaign, status="pending")
+    request = _make_request("get", api_key, path=f"/jobs/{job.pk}/")
+    response = JobDetailView.as_view()(request, pk=job.pk)
+    assert response.status_code == 200
+    assert isinstance(response.data["job_id"], str)
+
+
+# ---------------------------------------------------------------------------
+# New test: job list pagination
+# ---------------------------------------------------------------------------
+
+@pytest.mark.django_db
+def test_job_list_pagination_metadata(api_key, campaign):
+    """Job list response includes pagination metadata."""
+    request = _make_request("get", api_key, path="/jobs/")
+    response = JobListView.as_view()(request)
+    assert response.status_code == 200
+    assert "count" in response.data
+    assert "next" in response.data
+    assert "previous" in response.data
+    assert "results" in response.data
+
+
+@pytest.mark.django_db
+def test_job_list_invalid_limit(api_key, campaign):
+    """?limit=abc returns 400."""
+    request = _make_request("get", api_key, path="/?limit=abc")
+    response = JobListView.as_view()(request)
+    assert response.status_code == 400
+    assert "error" in response.data
+
+
+@pytest.mark.django_db
+def test_job_list_invalid_offset(api_key, campaign):
+    """?offset=xyz returns 400."""
+    request = _make_request("get", api_key, path="/?offset=xyz")
+    response = JobListView.as_view()(request)
+    assert response.status_code == 400
+    assert "error" in response.data

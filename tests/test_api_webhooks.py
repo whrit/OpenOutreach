@@ -130,7 +130,7 @@ def test_webhook_create_no_campaign(api_key):
     """POST without campaign_id → 201, campaign field is null."""
     data = {
         "url": "https://example.com/hook",
-        "events": ["profile.state_changed"],
+        "events": ["job.completed"],
     }
     request = _authed_request("post", api_key, path="/webhooks/", data=data)
     view = WebhookListCreateView.as_view()

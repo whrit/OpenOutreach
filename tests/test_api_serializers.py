@@ -76,7 +76,10 @@ def test_action_job_serializer_read(campaign):
     data = ser.data
     assert data["lane"] == "search"
     assert data["status"] == "pending"
-    assert "id" in data
+    # job_id is now a SerializerMethodField that returns str(pk); "id" is no longer in fields
+    assert "job_id" in data
+    assert data["job_id"] == str(job.pk)
+    assert "id" not in data
 
 
 def test_lane_trigger_serializer_valid(campaign):

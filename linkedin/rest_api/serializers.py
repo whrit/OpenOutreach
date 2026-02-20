@@ -1,3 +1,5 @@
+import json
+
 from rest_framework import serializers
 
 from linkedin.models import ActionJob, Campaign, WebhookSubscription
@@ -37,10 +39,15 @@ class CampaignSerializer(serializers.ModelSerializer):
 
 
 class ActionJobSerializer(serializers.ModelSerializer):
+    job_id = serializers.SerializerMethodField()
+
     class Meta:
         model = ActionJob
-        fields = ["id", "lane", "params", "status", "result", "campaign_id", "created_at", "updated_at"]
-        read_only_fields = ["id", "status", "result", "created_at", "updated_at"]
+        fields = ["job_id", "lane", "params", "status", "result", "campaign_id", "created_at", "updated_at"]
+        read_only_fields = ["job_id", "status", "result", "created_at", "updated_at"]
+
+    def get_job_id(self, obj) -> str:
+        return str(obj.pk)
 
 
 class LaneTriggerSerializer(serializers.Serializer):
@@ -48,6 +55,14 @@ class LaneTriggerSerializer(serializers.Serializer):
     lane = serializers.ChoiceField(choices=LANE_CHOICES)
     campaign_id = serializers.IntegerField()
     params = serializers.DictField(default=dict)
+
+    def validate_params(self, value):
+        serialized = json.dumps(value)
+        if len(serialized) > 4096:
+            raise serializers.ValidationError(
+                "params exceeds maximum allowed size of 4096 bytes."
+            )
+        return value
 
 
 class WebhookSerializer(serializers.ModelSerializer):

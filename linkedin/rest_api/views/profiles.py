@@ -14,13 +14,22 @@ from linkedin.rest_api.permissions import HasApiKey
 from linkedin.rest_api.serializers import ProfileInjectSerializer
 
 
-def _lead_to_dict(lead) -> dict:
-    """Convert a Lead ORM object to a profile summary dict."""
+def _lead_to_dict(lead, deal=None) -> dict:
+    """Convert a Lead ORM object to a profile summary dict.
+
+    Args:
+        lead: Lead ORM instance.
+        deal: Optional pre-fetched Deal for this lead. When None a single
+              DB query is executed (acceptable for detail views). The
+              paginated list view supplies a pre-fetched deal to avoid N+1.
+    """
     from crm.models import Deal
 
     public_id = url_to_public_id(lead.website) if lead.website else ""
 
-    deal = Deal.objects.filter(lead=lead).first()
+    if deal is None:
+        deal = Deal.objects.filter(lead=lead).first()
+
     if deal and deal.stage:
         state = deal.stage.name.lower()
     elif getattr(lead, "disqualified", False):
@@ -54,7 +63,7 @@ class ProfileListView(APIView):
     permission_classes = [HasApiKey]
 
     def get(self, request):
-        """List profiles, optionally filtered by state."""
+        """List profiles with limit/offset pagination, optionally filtered by state."""
         from crm.models import Lead, Deal
 
         state_filter = request.query_params.get("state")
@@ -89,8 +98,47 @@ class ProfileListView(APIView):
                 )
             qs = qs.filter(department__department__campaign__id=campaign_id)
 
-        data = [_lead_to_dict(lead) for lead in qs[:200]]
-        return Response(data)
+        # Pagination
+        try:
+            limit = min(int(request.query_params.get("limit", 100)), 500)
+            offset = max(int(request.query_params.get("offset", 0)), 0)
+        except (ValueError, TypeError):
+            return Response(
+                {"error": "limit and offset must be integers"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        total_count = qs.count()
+        page_qs = qs[offset: offset + limit]
+
+        # Prefetch deals for N+1 elimination
+        lead_list = list(page_qs)
+        lead_ids = [lead.pk for lead in lead_list]
+        deals_by_lead = {
+            d.lead_id: d
+            for d in Deal.objects.filter(lead_id__in=lead_ids).select_related("stage")
+        }
+
+        results = [_lead_to_dict(lead, deals_by_lead.get(lead.pk)) for lead in lead_list]
+
+        # Build next/previous URLs
+        base_path = request.build_absolute_uri(request.path)
+
+        def _page_url(new_offset):
+            params = request.query_params.copy()
+            params["offset"] = new_offset
+            params["limit"] = limit
+            return f"{base_path}?{'&'.join(f'{k}={v}' for k, v in params.items())}"
+
+        next_url = _page_url(offset + limit) if offset + limit < total_count else None
+        prev_url = _page_url(max(offset - limit, 0)) if offset > 0 else None
+
+        return Response({
+            "count": total_count,
+            "next": next_url,
+            "previous": prev_url,
+            "results": results,
+        })
 
     def post(self, request):
         """Inject profile URLs into the pipeline."""
@@ -162,4 +210,5 @@ class ProfileDetailView(APIView):
         lead = Lead.objects.filter(website=clean_url).first()
         if not lead:
             return Response({"error": "Profile not found"}, status=status.HTTP_404_NOT_FOUND)
+        # No pre-fetched deal — _lead_to_dict will execute a single query (acceptable for detail)
         return Response(_lead_to_dict(lead))

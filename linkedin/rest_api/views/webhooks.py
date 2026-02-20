@@ -8,7 +8,9 @@ from linkedin.rest_api.authentication import ApiKeyAuthentication
 from linkedin.rest_api.permissions import HasApiKey
 from linkedin.rest_api.serializers import WebhookSerializer
 
-VALID_EVENTS = {"job.completed", "job.failed", "profile.state_changed"}
+VALID_EVENTS = frozenset(["job.completed", "job.failed"])
+# Note: "profile.state_changed" removed — not yet implemented. Add back when
+# dispatch_webhooks is called from crm_profiles.py state transitions.
 
 
 class WebhookListCreateView(APIView):
