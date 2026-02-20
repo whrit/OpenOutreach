@@ -28,13 +28,11 @@ export async function openOutreachRequest(
 ): Promise<IDataObject | IDataObject[]> {
 	const credentials = await this.getCredentials('openOutreachApi');
 	const baseUrl = (credentials.baseUrl as string).replace(/\/$/, '');
-	const apiKey = credentials.apiKey as string;
 
 	const options: IHttpRequestOptions = {
 		method,
 		url: `${baseUrl}/api/v1${path}`,
 		headers: {
-			Authorization: `Api-Key ${apiKey}`,
 			'Content-Type': 'application/json',
 		},
 		body,
@@ -42,7 +40,7 @@ export async function openOutreachRequest(
 		json: true,
 	};
 
-	return this.helpers.httpRequest(options);
+	return this.helpers.httpRequestWithAuthentication.call(this, 'openOutreachApi', options);
 }
 
 /**

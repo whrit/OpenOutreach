@@ -86,7 +86,7 @@ export async function executeWebhooks(
 	if (operation === 'delete') {
 		const webhookId = this.getNodeParameter('webhookId', i) as number;
 		await openOutreachRequest.call(this, 'DELETE', `/webhooks/${webhookId}/`);
-		return [{ json: { success: true, webhookId } }];
+		return [{ json: { deleted: true } }];
 	}
 
 	throw new NodeOperationError(this.getNode(), `Unknown webhooks operation: ${operation}`);

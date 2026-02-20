@@ -63,19 +63,21 @@ export class OpenOutreach implements INodeType {
 
 		for (let i = 0; i < items.length; i++) {
 			try {
+				let actionResults: INodeExecutionData[];
 				if (resource === 'profiles') {
-					results.push(...(await executeProfiles.call(this, i)));
+					actionResults = await executeProfiles.call(this, i);
 				} else if (resource === 'campaigns') {
-					results.push(...(await executeCampaigns.call(this, i)));
+					actionResults = await executeCampaigns.call(this, i);
 				} else if (resource === 'lanes') {
-					results.push(...(await executeLanes.call(this, i)));
+					actionResults = await executeLanes.call(this, i);
 				} else if (resource === 'jobs') {
-					results.push(...(await executeJobs.call(this, i)));
+					actionResults = await executeJobs.call(this, i);
 				} else if (resource === 'webhooks') {
-					results.push(...(await executeWebhooks.call(this, i)));
+					actionResults = await executeWebhooks.call(this, i);
 				} else {
 					throw new NodeOperationError(this.getNode(), `Unknown resource: ${resource}`);
 				}
+				results.push(...actionResults.map((r) => ({ ...r, pairedItem: { item: i } })));
 			} catch (error) {
 				if (this.continueOnFail()) {
 					results.push({

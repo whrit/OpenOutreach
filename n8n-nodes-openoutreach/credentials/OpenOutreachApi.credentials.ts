@@ -29,8 +29,9 @@ export class OpenOutreachApi implements ICredentialType {
       displayName: 'Base URL',
       name: 'baseUrl',
       type: 'string',
+      required: true,
       default: 'https://openoutreach.example.com',
-      placeholder: 'https://your-openoutreach-host.com',
+      placeholder: 'e.g. https://openoutreach.yourdomain.com',
       description: 'The URL where your OpenOutreach instance is running',
     },
     {
@@ -38,6 +39,7 @@ export class OpenOutreachApi implements ICredentialType {
       name: 'apiKey',
       type: 'string',
       typeOptions: { password: true },
+      required: true,
       default: '',
       description: 'API key from OpenOutreach Django Admin -> API Keys',
     },
