@@ -53,6 +53,82 @@ class LaneSchedule:
         self.next_run = time.time() + self.base_interval * jitter
 
 
+def _process_action_jobs(session):
+    """Execute one pending ActionJob per daemon tick.
+
+    Called after each major action in the daemon loop. Processes at most one
+    pending job per call to preserve stealth timing.
+    """
+    from linkedin.models import ActionJob
+    from linkedin.rest_api.webhooks import dispatch_webhooks
+
+    job = ActionJob.objects.filter(status="pending").order_by("created_at").first()
+    if not job:
+        return
+
+    job.status = "running"
+    job.save(update_fields=["status", "updated_at"])
+
+    try:
+        result = _execute_action_job(session, job)
+        job.status = "completed"
+        job.result = result
+    except Exception as e:
+        job.status = "failed"
+        job.result = {"error": str(e)}
+    finally:
+        job.save(update_fields=["status", "result", "updated_at"])
+        dispatch_webhooks("job." + job.status, job)
+
+
+def _execute_action_job(session, job):
+    """Map an ActionJob's lane to the corresponding lane execute() call.
+
+    All lane execute() methods have a fixed signature (no parameters beyond
+    self), so job.params is not forwarded to execute(). The params field is
+    available for future use when individual lanes gain parameterised execute()
+    signatures.
+    """
+    from linkedin.conf import CAMPAIGN_CONFIG, MODEL_PATH
+    from linkedin.lanes.check_pending import CheckPendingLane
+    from linkedin.lanes.connect import ConnectLane
+    from linkedin.lanes.follow_up import FollowUpLane
+    from linkedin.lanes.qualify import QualifyLane
+    from linkedin.lanes.search import SearchLane
+    from linkedin.ml.qualifier import BayesianQualifier
+    from linkedin.rate_limiter import RateLimiter
+
+    # Set session campaign from job if provided
+    if job.campaign:
+        session.campaign = job.campaign
+
+    cfg = CAMPAIGN_CONFIG
+    lp = session.linkedin_profile
+
+    lane = None
+
+    if job.lane == "connect":
+        qualifier = BayesianQualifier(seed=42, n_mc_samples=cfg["qualification_n_mc_samples"], save_path=MODEL_PATH)
+        rate_limiter = RateLimiter(daily_limit=lp.connect_daily_limit, weekly_limit=lp.connect_weekly_limit)
+        lane = ConnectLane(session, rate_limiter, qualifier)
+    elif job.lane == "check_pending":
+        lane = CheckPendingLane(session, cfg["check_pending_recheck_after_hours"])
+    elif job.lane == "follow_up":
+        rate_limiter = RateLimiter(daily_limit=lp.follow_up_daily_limit)
+        lane = FollowUpLane(session, rate_limiter)
+    elif job.lane == "qualify":
+        qualifier = BayesianQualifier(seed=42, n_mc_samples=cfg["qualification_n_mc_samples"], save_path=MODEL_PATH)
+        lane = QualifyLane(session, qualifier)
+    elif job.lane == "search":
+        qualifier = BayesianQualifier(seed=42, n_mc_samples=cfg["qualification_n_mc_samples"], save_path=MODEL_PATH)
+        lane = SearchLane(session, qualifier)
+    else:
+        raise ValueError(f"Unknown lane: {job.lane!r}")
+
+    # All lane execute() methods have a fixed signature — params not forwarded.
+    return lane.execute()
+
+
 def _rebuild_analytics():
     """Run dbt to rebuild the analytics DB."""
     import subprocess
@@ -241,3 +317,8 @@ def run_daemon(session):
         else:
             # Nothing to do — retry soon instead of waiting the full interval
             next_schedule.next_run = time.time() + 60
+
+        try:
+            _process_action_jobs(session)
+        except Exception as e:
+            logger.warning("_process_action_jobs error: %s", e)
