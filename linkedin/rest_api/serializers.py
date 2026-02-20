@@ -74,5 +74,5 @@ class WebhookSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = WebhookSubscription
-        fields = ["id", "url", "events", "campaign_id", "active", "created_at"]
-        read_only_fields = ["id", "created_at"]
+        fields = ["id", "url", "events", "campaign_id", "active", "secret", "created_at"]
+        read_only_fields = ["id", "secret", "created_at"]

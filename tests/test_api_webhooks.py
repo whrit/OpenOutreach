@@ -1,5 +1,7 @@
 """Tests for webhook register/delete views and dispatch helper."""
-import time
+import hashlib
+import hmac
+import json
 import pytest
 from unittest.mock import patch, MagicMock
 from rest_framework.test import APIRequestFactory
@@ -81,6 +83,28 @@ def test_webhook_create_valid(api_key, campaign):
 
     # Verify persisted to DB
     assert WebhookSubscription.objects.filter(url=data["url"]).exists()
+
+
+@pytest.mark.django_db
+def test_webhook_create_returns_secret_on_creation(api_key, campaign):
+    """POST valid body → 201, response includes the secret field."""
+    data = {
+        "url": "https://my-n8n.example.com/webhook/secret-test",
+        "events": ["job.completed"],
+        "campaign_id": campaign.pk,
+    }
+    request = _authed_request("post", api_key, path="/webhooks/", data=data)
+    view = WebhookListCreateView.as_view()
+    response = view(request)
+
+    assert response.status_code == 201
+    # Secret must be present and non-empty
+    assert "secret" in response.data
+    secret = response.data["secret"]
+    assert secret and len(secret) > 0
+    # Should match the DB value
+    sub = WebhookSubscription.objects.get(url=data["url"])
+    assert sub.secret == secret
 
 
 @pytest.mark.django_db
@@ -171,7 +195,7 @@ def test_webhook_delete_not_found(api_key):
 
 
 # ---------------------------------------------------------------------------
-# dispatch_webhooks — unit tests
+# dispatch_webhooks — unit tests (thread.join for determinism)
 # ---------------------------------------------------------------------------
 
 @pytest.mark.django_db
@@ -197,9 +221,9 @@ def test_dispatch_webhooks_delivers_to_matching_subscription(campaign):
 
     with patch("linkedin.rest_api.webhooks.httpx.Client", mock_client_cls):
         from linkedin.rest_api.webhooks import dispatch_webhooks
-        dispatch_webhooks("job.completed", job)
-        # dispatch_webhooks is non-blocking — wait for daemon thread to finish.
-        time.sleep(0.2)
+        thread = dispatch_webhooks("job.completed", job)
+        if thread:
+            thread.join(timeout=2)
 
     mock_client_instance.post.assert_called_once()
     call_kwargs = mock_client_instance.post.call_args
@@ -235,10 +259,9 @@ def test_dispatch_webhooks_skips_inactive_subscription(campaign):
 
     with patch("linkedin.rest_api.webhooks.httpx.Client", mock_client_cls):
         from linkedin.rest_api.webhooks import dispatch_webhooks
-        dispatch_webhooks("job.completed", job)
-        # No thread is spawned when there are no matching subscriptions.
-        # Sleep briefly to confirm nothing fires.
-        time.sleep(0.1)
+        thread = dispatch_webhooks("job.completed", job)
+        if thread:
+            thread.join(timeout=2)
 
     mock_client_instance.post.assert_not_called()
 
@@ -277,7 +300,314 @@ def test_dispatch_webhooks_ignores_different_campaign(fake_session):
 
     with patch("linkedin.rest_api.webhooks.httpx.Client", mock_client_cls):
         from linkedin.rest_api.webhooks import dispatch_webhooks
-        dispatch_webhooks("job.completed", job)
-        time.sleep(0.1)
+        thread = dispatch_webhooks("job.completed", job)
+        if thread:
+            thread.join(timeout=2)
 
     mock_client_instance.post.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# dispatch_webhooks — HMAC signature tests (M2)
+# ---------------------------------------------------------------------------
+
+@pytest.mark.django_db
+def test_dispatch_webhooks_sends_hmac_signature(campaign):
+    """dispatch_webhooks must include X-OpenOutreach-Signature header with valid HMAC-SHA256."""
+    sub = WebhookSubscription.objects.create(
+        url="https://example.com/signed-hook",
+        events=["job.completed"],
+        campaign=campaign,
+        active=True,
+    )
+    job = ActionJob.objects.create(
+        lane="connect",
+        status="completed",
+        result=None,
+        campaign=campaign,
+    )
+
+    mock_client_instance = MagicMock()
+    mock_client_cls = MagicMock(return_value=mock_client_instance)
+    mock_client_instance.__enter__ = MagicMock(return_value=mock_client_instance)
+    mock_client_instance.__exit__ = MagicMock(return_value=False)
+
+    with patch("linkedin.rest_api.webhooks.httpx.Client", mock_client_cls):
+        from linkedin.rest_api.webhooks import dispatch_webhooks
+        thread = dispatch_webhooks("job.completed", job)
+        if thread:
+            thread.join(timeout=2)
+
+    mock_client_instance.post.assert_called_once()
+    call_kwargs = mock_client_instance.post.call_args
+    headers = call_kwargs[1]["headers"]
+    assert "X-OpenOutreach-Signature" in headers
+
+    # Verify the HMAC is correct
+    payload = call_kwargs[1]["json"]
+    expected_sig = hmac.new(
+        sub.secret.encode(),
+        json.dumps(payload, sort_keys=True).encode(),
+        hashlib.sha256,
+    ).hexdigest()
+    assert headers["X-OpenOutreach-Signature"] == f"sha256={expected_sig}"
+
+
+# ---------------------------------------------------------------------------
+# dispatch_webhooks — SSRF protection tests (C1)
+# ---------------------------------------------------------------------------
+
+@pytest.mark.django_db
+def test_dispatch_webhooks_blocks_loopback_url(campaign):
+    """dispatch_webhooks must not POST to loopback addresses (127.x.x.x)."""
+    WebhookSubscription.objects.create(
+        url="http://127.0.0.1:8080/internal",
+        events=["job.completed"],
+        campaign=campaign,
+        active=True,
+    )
+    job = ActionJob.objects.create(lane="connect", campaign=campaign)
+
+    mock_client_instance = MagicMock()
+    mock_client_cls = MagicMock(return_value=mock_client_instance)
+    mock_client_instance.__enter__ = MagicMock(return_value=mock_client_instance)
+    mock_client_instance.__exit__ = MagicMock(return_value=False)
+
+    with patch("linkedin.rest_api.webhooks.httpx.Client", mock_client_cls):
+        from linkedin.rest_api.webhooks import dispatch_webhooks
+        thread = dispatch_webhooks("job.completed", job)
+        if thread:
+            thread.join(timeout=2)
+
+    mock_client_instance.post.assert_not_called()
+
+
+@pytest.mark.django_db
+def test_dispatch_webhooks_blocks_link_local_url(campaign):
+    """dispatch_webhooks must not POST to link-local/AWS metadata addresses (169.254.x.x)."""
+    WebhookSubscription.objects.create(
+        url="http://169.254.169.254/latest/meta-data/",
+        events=["job.completed"],
+        campaign=campaign,
+        active=True,
+    )
+    job = ActionJob.objects.create(lane="connect", campaign=campaign)
+
+    mock_client_instance = MagicMock()
+    mock_client_cls = MagicMock(return_value=mock_client_instance)
+    mock_client_instance.__enter__ = MagicMock(return_value=mock_client_instance)
+    mock_client_instance.__exit__ = MagicMock(return_value=False)
+
+    with patch("linkedin.rest_api.webhooks.httpx.Client", mock_client_cls):
+        from linkedin.rest_api.webhooks import dispatch_webhooks
+        thread = dispatch_webhooks("job.completed", job)
+        if thread:
+            thread.join(timeout=2)
+
+    mock_client_instance.post.assert_not_called()
+
+
+@pytest.mark.django_db
+def test_dispatch_webhooks_blocks_private_rfc1918_url(campaign):
+    """dispatch_webhooks must not POST to RFC 1918 private addresses (10.x, 172.16-31.x, 192.168.x)."""
+    for private_url in [
+        "http://10.0.0.1/hook",
+        "http://172.16.0.1/hook",
+        "http://192.168.1.1/hook",
+    ]:
+        WebhookSubscription.objects.create(
+            url=private_url,
+            events=["job.completed"],
+            campaign=campaign,
+            active=True,
+        )
+
+    job = ActionJob.objects.create(lane="connect", campaign=campaign)
+
+    mock_client_instance = MagicMock()
+    mock_client_cls = MagicMock(return_value=mock_client_instance)
+    mock_client_instance.__enter__ = MagicMock(return_value=mock_client_instance)
+    mock_client_instance.__exit__ = MagicMock(return_value=False)
+
+    with patch("linkedin.rest_api.webhooks.httpx.Client", mock_client_cls):
+        from linkedin.rest_api.webhooks import dispatch_webhooks
+        thread = dispatch_webhooks("job.completed", job)
+        if thread:
+            thread.join(timeout=2)
+
+    mock_client_instance.post.assert_not_called()
+
+
+@pytest.mark.django_db
+def test_dispatch_webhooks_allows_public_url(campaign):
+    """dispatch_webhooks must POST to legitimate public URLs (not blocked by SSRF guard)."""
+    sub = WebhookSubscription.objects.create(
+        url="https://example.com/hook",
+        events=["job.completed"],
+        campaign=campaign,
+        active=True,
+    )
+    job = ActionJob.objects.create(lane="connect", campaign=campaign)
+
+    mock_client_instance = MagicMock()
+    mock_client_cls = MagicMock(return_value=mock_client_instance)
+    mock_client_instance.__enter__ = MagicMock(return_value=mock_client_instance)
+    mock_client_instance.__exit__ = MagicMock(return_value=False)
+
+    # Patch socket.getaddrinfo to return a predictable public IP
+    import socket
+    fake_addr_info = [(socket.AF_INET, socket.SOCK_STREAM, 0, "", ("93.184.216.34", 443))]
+
+    with patch("linkedin.rest_api.webhooks.httpx.Client", mock_client_cls), \
+         patch("linkedin.rest_api.webhooks.socket.getaddrinfo", return_value=fake_addr_info):
+        from linkedin.rest_api.webhooks import dispatch_webhooks
+        thread = dispatch_webhooks("job.completed", job)
+        if thread:
+            thread.join(timeout=2)
+
+    mock_client_instance.post.assert_called_once()
+    assert mock_client_instance.post.call_args[0][0] == sub.url
+
+
+@pytest.mark.django_db
+def test_dispatch_webhooks_blocks_dns_resolving_to_private(campaign):
+    """dispatch_webhooks blocks URLs whose hostname resolves to a private IP."""
+    import socket
+
+    WebhookSubscription.objects.create(
+        url="http://evil-internal.attacker.com/hook",
+        events=["job.completed"],
+        campaign=campaign,
+        active=True,
+    )
+    job = ActionJob.objects.create(lane="connect", campaign=campaign)
+
+    mock_client_instance = MagicMock()
+    mock_client_cls = MagicMock(return_value=mock_client_instance)
+    mock_client_instance.__enter__ = MagicMock(return_value=mock_client_instance)
+    mock_client_instance.__exit__ = MagicMock(return_value=False)
+
+    # Simulate DNS rebinding: hostname resolves to a private IP
+    fake_addr_info = [(socket.AF_INET, socket.SOCK_STREAM, 0, "", ("10.0.0.1", 80))]
+
+    with patch("linkedin.rest_api.webhooks.httpx.Client", mock_client_cls), \
+         patch("linkedin.rest_api.webhooks.socket.getaddrinfo", return_value=fake_addr_info):
+        from linkedin.rest_api.webhooks import dispatch_webhooks
+        thread = dispatch_webhooks("job.completed", job)
+        if thread:
+            thread.join(timeout=2)
+
+    mock_client_instance.post.assert_not_called()
+
+
+@pytest.mark.django_db
+def test_dispatch_webhooks_skips_on_dns_failure(campaign):
+    """dispatch_webhooks logs warning and skips delivery when DNS resolution fails."""
+    import socket
+
+    WebhookSubscription.objects.create(
+        url="http://nonexistent-host.invalid/hook",
+        events=["job.completed"],
+        campaign=campaign,
+        active=True,
+    )
+    job = ActionJob.objects.create(lane="connect", campaign=campaign)
+
+    mock_client_instance = MagicMock()
+    mock_client_cls = MagicMock(return_value=mock_client_instance)
+    mock_client_instance.__enter__ = MagicMock(return_value=mock_client_instance)
+    mock_client_instance.__exit__ = MagicMock(return_value=False)
+
+    with patch("linkedin.rest_api.webhooks.httpx.Client", mock_client_cls), \
+         patch("linkedin.rest_api.webhooks.socket.getaddrinfo", side_effect=socket.gaierror("DNS failure")):
+        from linkedin.rest_api.webhooks import dispatch_webhooks
+        thread = dispatch_webhooks("job.completed", job)
+        if thread:
+            thread.join(timeout=2)
+
+    mock_client_instance.post.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# dispatch_webhooks — returns Thread object
+# ---------------------------------------------------------------------------
+
+@pytest.mark.django_db
+def test_dispatch_webhooks_returns_thread_when_matching(campaign):
+    """dispatch_webhooks must return a threading.Thread when there are matching subscriptions."""
+    import threading
+
+    WebhookSubscription.objects.create(
+        url="https://example.com/hook",
+        events=["job.completed"],
+        campaign=campaign,
+        active=True,
+    )
+    job = ActionJob.objects.create(lane="connect", campaign=campaign)
+
+    mock_client_instance = MagicMock()
+    mock_client_cls = MagicMock(return_value=mock_client_instance)
+    mock_client_instance.__enter__ = MagicMock(return_value=mock_client_instance)
+    mock_client_instance.__exit__ = MagicMock(return_value=False)
+
+    with patch("linkedin.rest_api.webhooks.httpx.Client", mock_client_cls):
+        from linkedin.rest_api.webhooks import dispatch_webhooks
+        result = dispatch_webhooks("job.completed", job)
+
+    assert isinstance(result, threading.Thread)
+    result.join(timeout=2)
+
+
+@pytest.mark.django_db
+def test_dispatch_webhooks_returns_none_when_no_match(campaign):
+    """dispatch_webhooks must return None when there are no matching subscriptions."""
+    # No subscriptions created
+    job = ActionJob.objects.create(lane="connect", campaign=campaign)
+
+    from linkedin.rest_api.webhooks import dispatch_webhooks
+    result = dispatch_webhooks("job.completed", job)
+
+    assert result is None
+
+
+# ---------------------------------------------------------------------------
+# dispatch_webhooks — global subscription (campaign=None) fires for any campaign
+# ---------------------------------------------------------------------------
+
+@pytest.mark.django_db
+def test_dispatch_webhooks_global_subscription_fires_for_any_campaign(fake_session):
+    """A WebhookSubscription with campaign=None fires for jobs from ANY campaign."""
+    from common.models import Department
+    from django.contrib.auth.models import Group
+
+    # Create a specific campaign for the job
+    group_c, _ = Group.objects.get_or_create(name="CampaignC-Group")
+    dept_c, _ = Department.objects.get_or_create(id=group_c.id, defaults={"name": "CampaignC-Group"})
+    campaign_c, _ = Campaign.objects.get_or_create(department=dept_c)
+
+    # Global subscription — no campaign filter
+    sub = WebhookSubscription.objects.create(
+        url="https://example.com/global-hook",
+        events=["job.completed"],
+        campaign=None,
+        active=True,
+    )
+
+    job = ActionJob.objects.create(
+        lane="connect",
+        campaign=campaign_c,
+    )
+
+    mock_client_instance = MagicMock()
+    mock_client_cls = MagicMock(return_value=mock_client_instance)
+    mock_client_instance.__enter__ = MagicMock(return_value=mock_client_instance)
+    mock_client_instance.__exit__ = MagicMock(return_value=False)
+
+    with patch("linkedin.rest_api.webhooks.httpx.Client", mock_client_cls):
+        from linkedin.rest_api.webhooks import dispatch_webhooks
+        thread = dispatch_webhooks("job.completed", job)
+        if thread:
+            thread.join(timeout=2)
+
+    mock_client_instance.post.assert_called_once()
+    assert mock_client_instance.post.call_args[0][0] == sub.url

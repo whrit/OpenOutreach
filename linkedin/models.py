@@ -135,6 +135,7 @@ class WebhookSubscription(models.Model):
         related_name="webhook_subscriptions",
     )
     active = models.BooleanField(default=True)
+    secret = models.CharField(max_length=64, default=secrets.token_hex)
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
