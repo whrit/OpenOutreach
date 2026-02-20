@@ -1,4 +1,10 @@
-import { IDataObject, IExecuteFunctions, INodeExecutionData, INodeProperties } from 'n8n-workflow';
+import {
+	IDataObject,
+	IExecuteFunctions,
+	INodeExecutionData,
+	INodeProperties,
+	NodeOperationError,
+} from 'n8n-workflow';
 import { openOutreachRequest, pollJobUntilDone } from '../helpers';
 
 export const lanesOperations: INodeProperties[] = [
@@ -43,8 +49,8 @@ export const lanesFields: INodeProperties[] = [
 		type: 'number',
 		required: true,
 		displayOptions: { show: { resource: ['lanes'], operation: ['trigger'] } },
-		default: 1,
-		description: 'ID of the campaign this job belongs to',
+		default: 0,
+		description: 'ID of the campaign this job belongs to. Replace 0 with your actual campaign ID.',
 	},
 	{
 		displayName: 'Keyword (Search Lane Only)',
@@ -85,7 +91,14 @@ export async function executeLanes(
 
 	const params: IDataObject = {};
 	if (lane === 'search') {
-		params.keyword = this.getNodeParameter('keyword', i, '') as string;
+		const kw = this.getNodeParameter('keyword', i, '') as string;
+		if (!kw.trim()) {
+			throw new NodeOperationError(
+				this.getNode(),
+				'Keyword is required for the Search lane. Please provide a LinkedIn search keyword.',
+			);
+		}
+		params.keyword = kw;
 	}
 
 	const job = (await openOutreachRequest.call(this, 'POST', `/lanes/${lane}/trigger/`, {

@@ -1,4 +1,10 @@
-import { IDataObject, IExecuteFunctions, INodeExecutionData, INodeProperties } from 'n8n-workflow';
+import {
+	IDataObject,
+	IExecuteFunctions,
+	INodeExecutionData,
+	INodeProperties,
+	NodeOperationError,
+} from 'n8n-workflow';
 import { openOutreachRequest } from '../helpers';
 
 export const campaignsOperations: INodeProperties[] = [
@@ -24,8 +30,25 @@ export const campaignsFields: INodeProperties[] = [
 		type: 'number',
 		required: true,
 		displayOptions: { show: { resource: ['campaigns'], operation: ['get', 'update'] } },
-		default: 1,
-		description: 'Numeric ID of the campaign',
+		default: 0,
+		description: 'Numeric ID of the campaign. Replace 0 with your actual campaign ID.',
+	},
+	{
+		displayName: 'Return All',
+		name: 'returnAll',
+		type: 'boolean',
+		displayOptions: { show: { resource: ['campaigns'], operation: ['getMany'] } },
+		default: false,
+		description: 'Whether to return all results or only up to a given limit',
+	},
+	{
+		displayName: 'Limit',
+		name: 'limit',
+		type: 'number',
+		typeOptions: { minValue: 1, maxValue: 1000 },
+		displayOptions: { show: { resource: ['campaigns'], operation: ['getMany'], returnAll: [false] } },
+		default: 50,
+		description: 'Max number of results to return',
 	},
 	{
 		displayName: 'Product Docs',
@@ -71,10 +94,36 @@ export async function executeCampaigns(
 	const operation = this.getNodeParameter('operation', i) as string;
 
 	if (operation === 'getMany') {
-		const response = await openOutreachRequest.call(this, 'GET', '/campaigns/');
-		// API returns a flat array; cast accordingly
-		const results = response as IDataObject[];
-		return results.map((r) => ({ json: r }));
+		const returnAll = this.getNodeParameter('returnAll', i, false) as boolean;
+		const limit = this.getNodeParameter('limit', i, 50) as number;
+		let items: IDataObject[] = [];
+
+		if (returnAll) {
+			let page = 1;
+			while (true) {
+				const response = (await openOutreachRequest.call(
+					this, 'GET', '/campaigns/', undefined, { page },
+				)) as IDataObject;
+				const pageItems: IDataObject[] = Array.isArray(response.results)
+					? (response.results as IDataObject[])
+					: (Array.isArray(response) ? (response as unknown as IDataObject[]) : []);
+				items.push(...pageItems);
+				if (!response.next) break;
+				page++;
+			}
+		} else {
+			const response = await openOutreachRequest.call(
+				this, 'GET', '/campaigns/', undefined, { page_size: limit },
+			);
+			if (Array.isArray(response)) {
+				items = response as IDataObject[];
+			} else {
+				const paginated = response as IDataObject;
+				items = (paginated.results as IDataObject[]) ?? [paginated];
+			}
+		}
+
+		return items.map((r) => ({ json: r }));
 	}
 
 	const campaignId = this.getNodeParameter('campaignId', i) as number;
@@ -98,6 +147,12 @@ export async function executeCampaigns(
 		if (co) body.campaign_objective = co;
 		if (ft) body.followup_template = ft;
 		if (bl) body.booking_link = bl;
+		if (Object.keys(body).length === 0) {
+			throw new NodeOperationError(
+				this.getNode(),
+				'At least one field must be provided to update a campaign. All fields were left blank.',
+			);
+		}
 		const result = (await openOutreachRequest.call(
 			this,
 			'PATCH',
@@ -107,5 +162,5 @@ export async function executeCampaigns(
 		return [{ json: result }];
 	}
 
-	throw new Error(`Unknown campaigns operation: ${operation}`);
+	throw new NodeOperationError(this.getNode(), `Unknown campaigns operation: ${operation}`);
 }

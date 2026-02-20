@@ -4,6 +4,7 @@ import {
 	INodeType,
 	INodeTypeDescription,
 	NodeConnectionTypes,
+	NodeApiError,
 	NodeOperationError,
 } from 'n8n-workflow';
 
@@ -11,6 +12,7 @@ import { profilesOperations, profilesFields, executeProfiles } from './actions/p
 import { campaignsOperations, campaignsFields, executeCampaigns } from './actions/campaigns';
 import { lanesOperations, lanesFields, executeLanes } from './actions/lanes';
 import { jobsOperations, jobsFields, executeJobs } from './actions/jobs';
+import { webhooksOperations, webhooksFields, executeWebhooks } from './actions/webhooks';
 
 export class OpenOutreach implements INodeType {
 	description: INodeTypeDescription = {
@@ -37,6 +39,7 @@ export class OpenOutreach implements INodeType {
 					{ name: 'Job', value: 'jobs' },
 					{ name: 'Lane', value: 'lanes' },
 					{ name: 'Profile', value: 'profiles' },
+					{ name: 'Webhook', value: 'webhooks' },
 				],
 				default: 'profiles',
 			},
@@ -48,6 +51,8 @@ export class OpenOutreach implements INodeType {
 			...lanesFields,
 			...jobsOperations,
 			...jobsFields,
+			...webhooksOperations,
+			...webhooksFields,
 		],
 	};
 
@@ -57,16 +62,32 @@ export class OpenOutreach implements INodeType {
 		const results: INodeExecutionData[] = [];
 
 		for (let i = 0; i < items.length; i++) {
-			if (resource === 'profiles') {
-				results.push(...(await executeProfiles.call(this, i)));
-			} else if (resource === 'campaigns') {
-				results.push(...(await executeCampaigns.call(this, i)));
-			} else if (resource === 'lanes') {
-				results.push(...(await executeLanes.call(this, i)));
-			} else if (resource === 'jobs') {
-				results.push(...(await executeJobs.call(this, i)));
-			} else {
-				throw new NodeOperationError(this.getNode(), `Unknown resource: ${resource}`);
+			try {
+				if (resource === 'profiles') {
+					results.push(...(await executeProfiles.call(this, i)));
+				} else if (resource === 'campaigns') {
+					results.push(...(await executeCampaigns.call(this, i)));
+				} else if (resource === 'lanes') {
+					results.push(...(await executeLanes.call(this, i)));
+				} else if (resource === 'jobs') {
+					results.push(...(await executeJobs.call(this, i)));
+				} else if (resource === 'webhooks') {
+					results.push(...(await executeWebhooks.call(this, i)));
+				} else {
+					throw new NodeOperationError(this.getNode(), `Unknown resource: ${resource}`);
+				}
+			} catch (error) {
+				if (this.continueOnFail()) {
+					results.push({
+						json: this.getInputData()[i].json,
+						error: error instanceof NodeOperationError || error instanceof NodeApiError
+						? error
+						: new NodeOperationError(this.getNode(), error as Error, { itemIndex: i }),
+						pairedItem: { item: i },
+					});
+					continue;
+				}
+				throw error;
 			}
 		}
 

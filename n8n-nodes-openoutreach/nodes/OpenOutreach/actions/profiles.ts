@@ -1,4 +1,10 @@
-import { IDataObject, IExecuteFunctions, INodeExecutionData, INodeProperties } from 'n8n-workflow';
+import {
+	IDataObject,
+	IExecuteFunctions,
+	INodeExecutionData,
+	INodeProperties,
+	NodeOperationError,
+} from 'n8n-workflow';
 import { openOutreachRequest } from '../helpers';
 
 export const profilesOperations: INodeProperties[] = [
@@ -60,6 +66,23 @@ export const profilesFields: INodeProperties[] = [
 		default: 0,
 		description: 'Restrict results to a specific campaign. Leave 0 to return profiles across all campaigns.',
 	},
+	{
+		displayName: 'Return All',
+		name: 'returnAll',
+		type: 'boolean',
+		displayOptions: { show: { resource: ['profiles'], operation: ['getMany'] } },
+		default: false,
+		description: 'Whether to return all results or only up to a given limit',
+	},
+	{
+		displayName: 'Limit',
+		name: 'limit',
+		type: 'number',
+		typeOptions: { minValue: 1, maxValue: 1000 },
+		displayOptions: { show: { resource: ['profiles'], operation: ['getMany'], returnAll: [false] } },
+		default: 50,
+		description: 'Max number of results to return',
+	},
 
 	// ── get fields ────────────────────────────────────────────────────────────
 	{
@@ -91,8 +114,8 @@ export const profilesFields: INodeProperties[] = [
 		type: 'number',
 		required: true,
 		displayOptions: { show: { resource: ['profiles'], operation: ['inject'] } },
-		default: 1,
-		description: 'ID of the campaign to associate the injected profiles with',
+		default: 0,
+		description: 'ID of the campaign to associate the injected profiles with. Replace 0 with your actual campaign ID.',
 	},
 ];
 
@@ -105,6 +128,8 @@ export async function executeProfiles(
 	if (operation === 'getMany') {
 		const state = this.getNodeParameter('state', i) as string;
 		const campaignIdFilter = this.getNodeParameter('campaignIdFilter', i) as number;
+		const returnAll = this.getNodeParameter('returnAll', i, false) as boolean;
+		const limit = this.getNodeParameter('limit', i, 50) as number;
 
 		const qs: IDataObject = {};
 		if (state) {
@@ -114,16 +139,31 @@ export async function executeProfiles(
 			qs.campaign_id = campaignIdFilter;
 		}
 
-		const response = await openOutreachRequest.call(this, 'GET', '/profiles/', undefined, qs);
+		let items: IDataObject[] = [];
 
-		// The API returns either a paginated object { count, results: [...] }
-		// or a plain array. Handle both shapes.
-		let items: IDataObject[];
-		if (Array.isArray(response)) {
-			items = response as IDataObject[];
+		if (returnAll) {
+			let page = 1;
+			while (true) {
+				const response = (await openOutreachRequest.call(
+					this, 'GET', '/profiles/', undefined, { ...qs, page },
+				)) as IDataObject;
+				const pageItems: IDataObject[] = Array.isArray(response.results)
+					? (response.results as IDataObject[])
+					: (Array.isArray(response) ? (response as unknown as IDataObject[]) : []);
+				items.push(...pageItems);
+				if (!response.next) break;
+				page++;
+			}
 		} else {
-			const paginated = response as IDataObject;
-			items = (paginated.results as IDataObject[]) ?? [paginated];
+			const response = await openOutreachRequest.call(
+				this, 'GET', '/profiles/', undefined, { ...qs, page_size: limit },
+			);
+			if (Array.isArray(response)) {
+				items = response as IDataObject[];
+			} else {
+				const paginated = response as IDataObject;
+				items = (paginated.results as IDataObject[]) ?? [paginated];
+			}
 		}
 
 		return items.map((item) => ({ json: item }));
@@ -157,5 +197,5 @@ export async function executeProfiles(
 		return results.map((item) => ({ json: item }));
 	}
 
-	throw new Error(`Unknown profiles operation: ${operation}`);
+	throw new NodeOperationError(this.getNode(), `Unknown profiles operation: ${operation}`);
 }

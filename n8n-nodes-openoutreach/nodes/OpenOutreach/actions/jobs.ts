@@ -41,6 +41,23 @@ export const jobsFields: INodeProperties[] = [
 		default: '',
 		description: 'Filter jobs by status (leave blank for all)',
 	},
+	{
+		displayName: 'Return All',
+		name: 'returnAll',
+		type: 'boolean',
+		displayOptions: { show: { resource: ['jobs'], operation: ['getMany'] } },
+		default: false,
+		description: 'Whether to return all results or only up to a given limit',
+	},
+	{
+		displayName: 'Limit',
+		name: 'limit',
+		type: 'number',
+		typeOptions: { minValue: 1, maxValue: 1000 },
+		displayOptions: { show: { resource: ['jobs'], operation: ['getMany'], returnAll: [false] } },
+		default: 50,
+		description: 'Max number of results to return',
+	},
 ];
 
 export async function executeJobs(
@@ -57,16 +74,36 @@ export async function executeJobs(
 
 	// getMany — handle both a plain array and a paginated { results: [...] } shape
 	const status = this.getNodeParameter('status', i, '') as string;
+	const returnAll = this.getNodeParameter('returnAll', i, false) as boolean;
+	const limit = this.getNodeParameter('limit', i, 50) as number;
 	const qs: IDataObject = {};
 	if (status) qs.status = status;
-	const response = await openOutreachRequest.call(this, 'GET', '/jobs/', undefined, qs);
 
-	let items: IDataObject[];
-	if (Array.isArray(response)) {
-		items = response as IDataObject[];
+	let items: IDataObject[] = [];
+
+	if (returnAll) {
+		let page = 1;
+		while (true) {
+			const response = (await openOutreachRequest.call(
+				this, 'GET', '/jobs/', undefined, { ...qs, page },
+			)) as IDataObject;
+			const pageItems: IDataObject[] = Array.isArray(response.results)
+				? (response.results as IDataObject[])
+				: (Array.isArray(response) ? (response as unknown as IDataObject[]) : []);
+			items.push(...pageItems);
+			if (!response.next) break;
+			page++;
+		}
 	} else {
-		const paginated = response as IDataObject;
-		items = (paginated.results as IDataObject[]) ?? [paginated];
+		const response = await openOutreachRequest.call(
+			this, 'GET', '/jobs/', undefined, { ...qs, page_size: limit },
+		);
+		if (Array.isArray(response)) {
+			items = response as IDataObject[];
+		} else {
+			const paginated = response as IDataObject;
+			items = (paginated.results as IDataObject[]) ?? [paginated];
+		}
 	}
 
 	return items.map((r) => ({ json: r }));

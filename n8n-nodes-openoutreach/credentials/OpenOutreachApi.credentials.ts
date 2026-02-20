@@ -9,7 +9,7 @@ export class OpenOutreachApi implements ICredentialType {
   name = 'openOutreachApi';
   displayName = 'OpenOutreach API';
   documentationUrl = 'https://github.com/eracle/OpenOutreach';
-  icon = 'file:openoutreach.svg' as ICredentialType['icon'];
+  icon = 'file:openoutreach.svg' as const;
   authenticate: IAuthenticateGeneric = {
     type: 'generic',
     properties: {
@@ -22,9 +22,6 @@ export class OpenOutreachApi implements ICredentialType {
     request: {
       baseURL: '={{$credentials.baseUrl}}',
       url: '/api/v1/campaigns/',
-      headers: {
-        Authorization: '=Api-Key {{$credentials.apiKey}}',
-      },
     },
   };
   properties: INodeProperties[] = [
