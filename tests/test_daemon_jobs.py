@@ -1,7 +1,7 @@
 # tests/test_daemon_jobs.py
 """Tests for _process_action_jobs and _execute_action_job in linkedin/daemon.py."""
 import datetime
-from unittest.mock import MagicMock, call, patch
+from unittest.mock import ANY, MagicMock, call, patch
 
 import pytest
 
@@ -37,7 +37,7 @@ def test_process_action_jobs_marks_running_then_completed(fake_session):
     assert job.status == "pending"
 
     with patch("linkedin.daemon._execute_action_job", return_value={"profiles_found": 3}) as mock_exec:
-        with patch("linkedin.rest_api.webhooks.dispatch_webhooks"):
+        with patch("linkedin.rest_api.webhooks.dispatch_webhooks") as mock_dispatch:
             _process_action_jobs(fake_session)
 
     job.refresh_from_db()
@@ -46,6 +46,9 @@ def test_process_action_jobs_marks_running_then_completed(fake_session):
 
     # _execute_action_job must have been called with the session and the job
     mock_exec.assert_called_once_with(fake_session, job)
+
+    # dispatch_webhooks must have been called with the completed event
+    mock_dispatch.assert_called_once_with("job.completed", ANY)
 
 
 # ---------------------------------------------------------------------------
@@ -58,13 +61,16 @@ def test_process_action_jobs_marks_failed_on_exception(fake_session):
     job = ActionJob.objects.create(lane="connect", campaign=fake_session.campaign)
 
     with patch("linkedin.daemon._execute_action_job", side_effect=RuntimeError("boom")):
-        with patch("linkedin.rest_api.webhooks.dispatch_webhooks"):
+        with patch("linkedin.rest_api.webhooks.dispatch_webhooks") as mock_dispatch:
             _process_action_jobs(fake_session)
 
     job.refresh_from_db()
     assert job.status == "failed"
     assert "error" in job.result
     assert "boom" in job.result["error"]
+
+    # dispatch_webhooks must have been called with the failed event
+    mock_dispatch.assert_called_once_with("job.failed", ANY)
 
 
 # ---------------------------------------------------------------------------
@@ -120,7 +126,7 @@ def test_process_action_jobs_processes_oldest_first(fake_session):
         return {"done": True}
 
     with patch("linkedin.daemon._execute_action_job", side_effect=fake_execute):
-        with patch("linkedin.rest_api.webhooks.dispatch_webhooks"):
+        with patch("linkedin.rest_api.webhooks.dispatch_webhooks") as mock_dispatch:
             _process_action_jobs(fake_session)
 
     assert len(processed_jobs) == 1
@@ -130,6 +136,9 @@ def test_process_action_jobs_processes_oldest_first(fake_session):
     newer_job.refresh_from_db()
     assert older_job.status == "completed"
     assert newer_job.status == "pending"
+
+    # dispatch_webhooks must have been called once (for the older job)
+    mock_dispatch.assert_called_once()
 
 
 # ---------------------------------------------------------------------------

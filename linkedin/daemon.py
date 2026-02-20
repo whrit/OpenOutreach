@@ -59,15 +59,23 @@ def _process_action_jobs(session):
     Called after each major action in the daemon loop. Processes at most one
     pending job per call to preserve stealth timing.
     """
+    from django.db import transaction
+
     from linkedin.models import ActionJob
     from linkedin.rest_api.webhooks import dispatch_webhooks
 
-    job = ActionJob.objects.filter(status="pending").order_by("created_at").first()
-    if not job:
-        return
-
-    job.status = "running"
-    job.save(update_fields=["status", "updated_at"])
+    with transaction.atomic():
+        job = (
+            ActionJob.objects
+            .select_for_update()
+            .filter(status="pending")
+            .order_by("created_at")
+            .first()
+        )
+        if not job:
+            return
+        job.status = "running"
+        job.save(update_fields=["status", "updated_at"])
 
     try:
         result = _execute_action_job(session, job)
@@ -98,9 +106,8 @@ def _execute_action_job(session, job):
     from linkedin.ml.qualifier import BayesianQualifier
     from linkedin.rate_limiter import RateLimiter
 
-    # Set session campaign from job if provided
-    if job.campaign:
-        session.campaign = job.campaign
+    # Always assign campaign from job (may be None; lane handles it)
+    session.campaign = job.campaign
 
     cfg = CAMPAIGN_CONFIG
     lp = session.linkedin_profile
@@ -269,6 +276,10 @@ def run_daemon(session):
             if pipeline_needs_refill(session, min_qualifiable_leads):
                 if search_lane.can_execute():
                     search_lane.execute()
+                    try:
+                        _process_action_jobs(session)
+                    except Exception as e:
+                        logger.warning("_process_action_jobs error: %s", e)
                     continue
 
             to_qualify = count_leads_for_qualification(session)
@@ -284,6 +295,10 @@ def run_daemon(session):
 
                 if qualify_lane.can_execute():
                     qualify_lane.execute()
+                    try:
+                        _process_action_jobs(session)
+                    except Exception as e:
+                        logger.warning("_process_action_jobs error: %s", e)
                     continue
 
         # ── Wait for major action ──
@@ -301,6 +316,10 @@ def run_daemon(session):
         if next_schedule.campaign.is_partner:
             if random.random() >= next_schedule.campaign.action_fraction:
                 next_schedule.reschedule()
+                try:
+                    _process_action_jobs(session)
+                except Exception as e:
+                    logger.warning("_process_action_jobs error: %s", e)
                 continue
             seed_partner_deals(session)
 
@@ -308,6 +327,10 @@ def run_daemon(session):
         if not next_schedule.campaign.is_partner and partner_fraction > 0:
             if random.random() < partner_fraction:
                 next_schedule.reschedule()
+                try:
+                    _process_action_jobs(session)
+                except Exception as e:
+                    logger.warning("_process_action_jobs error: %s", e)
                 continue
 
         if next_schedule.lane.can_execute():
