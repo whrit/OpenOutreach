@@ -2,7 +2,7 @@
     "name": "n8n-nodes-openoutreach",
     "version": "0.1.0",
     "description": "n8n community node for OpenOutreach — self-hosted LinkedIn automation",
-    "license": "MIT",
+    "license": "GPL-3.0",
     "homepage": "https://github.com/eracle/openoutreach",
     "keywords": [
         "n8n-community-node-package"
