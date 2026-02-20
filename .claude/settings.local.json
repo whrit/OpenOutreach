@@ -6,7 +6,12 @@
       "Bash(.venv/bin/python:*)",
       "Bash(.venv/bin/pip show:*)",
       "Bash(uv pip install:*)",
-      "Bash(DJANGO_SETTINGS_MODULE=linkedin.django_settings .venv/bin/python:*)"
+      "Bash(DJANGO_SETTINGS_MODULE=linkedin.django_settings .venv/bin/python:*)",
+      "Bash(python3:*)",
+      "Bash(npm run build:*)",
+      "Bash(npm run lint:*)",
+      "Bash(find:*)",
+      "Bash(echo:*)"
     ]
   }
 }

@@ -1,6 +1,6 @@
 # n8n Integration Implementation Plan
 
-> **Status:** Phase 1 COMPLETE ✅ — 289 tests passing, 0 failures (2026-02-19) | Phase 2 COMPLETE ✅ — build passes, 0 errors (2026-02-19)
+> **Status:** Phase 1 COMPLETE ✅ — 289 tests passing, 0 failures (2026-02-19) | Phase 2 COMPLETE ✅ — build passes, 0 errors (2026-02-19) | Phase 2 Review Fixes COMPLETE ✅ — all C/I/M issues resolved (2026-02-19)
 > **For Claude:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
 
 **Goal:** Add a DRF REST API to OpenOutreach (with ApiKey auth, async ActionJob queue, and webhook delivery) plus a TypeScript n8n community node (`n8n-nodes-openoutreach`) so n8n workflows can orchestrate LinkedIn automations.
@@ -2034,3 +2034,44 @@ All changes are additive (new app, new models, new endpoints). The daemon change
 - **n8n node**: manual testing via linked local package + live OpenOutreach instance
 
 Run all: `make test` or `pytest tests/ -v`
+
+---
+
+## Phase 2 Review Fixes (2026-02-19) ✅
+
+Three parallel code reviews were conducted after Phase 2 completion, covering spec compliance, TypeScript quality, and REST API alignment. All findings were resolved in the same session.
+
+### Critical Issues (resolved)
+
+| ID | Issue | Fix |
+|---|---|---|
+| C-1 | `pollJobUntilDone` returned failed jobs silently (no error thrown) | Restructured to `do…while`; throws `NodeOperationError` when `status === 'failed'`; only returns on `'completed'` |
+| C-2 | Missing `continueOnFail()` guard in node execute loop | Wrapped per-item dispatch in try/catch; pushes error item when flag is set, re-throws otherwise |
+| C-3 | `openOutreachRequest` options object not typed as `IHttpRequestOptions` | Added explicit `const options: IHttpRequestOptions` annotation; removed unsafe `as IDataObject` cast |
+| C-4 | `pollJobUntilDone` passed string `jobId` directly into URL — DRF uses `<int:pk>` | Added `parseInt(jobId, 10)` with `isNaN` guard; throws `NodeOperationError` on non-integer input |
+
+### Important Issues (resolved)
+
+| ID | Issue | Fix |
+|---|---|---|
+| I-1 | `actions/webhooks.ts` was missing | Created with `register` (POST) and `delete` (DELETE) operations |
+| I-2 | `actions/index.ts` barrel export was missing | Created with exports for all 5 resource modules |
+| I-3 | Campaigns `update` sent empty PATCH body with no fields | Added `Object.keys(body).length === 0` guard; throws `NodeOperationError` |
+| I-4 | Search lane allowed empty `keyword` param | Added `!kw.trim()` validation; throws `NodeOperationError` |
+| I-5 | All `getMany` operations truncated silently at one page | Added `returnAll` boolean + `limit` number fields; implemented page-increment auto-pagination loop |
+| I-6 | Credential `test.request` duplicated auth headers already applied by `authenticate` block | Removed redundant `headers` property from `test.request` |
+| I-7 | Bare `throw new Error(...)` in action files — n8n expects `NodeOperationError` | Replaced all instances with `throw new NodeOperationError(this.getNode(), ...)` |
+| I-8 | `peerDependencies` used `"*"` — too permissive and causes npm warnings | Changed to `">=1.0.0 <3"` |
+| I-9 | `while (Date.now() < deadline)` loop could exit without checking if first GET took longer than `timeoutMs` | Replaced with `do…while` that always executes one iteration |
+
+### Minor Issues (resolved)
+
+| ID | Issue | Fix |
+|---|---|---|
+| M-1 | `package.json` `homepage` was empty | Set to `"https://github.com/eracle/openoutreach"` |
+| M-2 | Root `index.ts` not listed in `tsconfig.json` `include` array | Added `"index.ts"` as first entry |
+| M-3 | `typescript` devDependency pinned to non-existent version `5.9.2` | Changed to `"~5.7.0"` |
+| M-4 | Campaigns `getMany` only handled flat arrays, not paginated envelope | Added dual-shape handler consistent with profiles.ts and jobs.ts |
+| M-5 | `default: 1` for campaign ID fields | Changed to `0` across all action files; updated descriptions |
+| M-6 | `icon` cast used `as ICredentialType['icon']` instead of `as const` | Changed to `as const` (required for `file:${string}` template literal union narrowing) |
+| M-7 | `package.json` `license` was `"MIT"` — repo uses GPL-3.0 | Corrected to `"GPL-3.0"` to match `LICENCE.md` |

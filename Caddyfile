@@ -1,0 +1,11 @@
+# Caddyfile — OpenOutreach HTTPS reverse proxy
+#
+# Replace "openoutreach.yourdomain.com" with your actual domain.
+# Caddy will obtain and renew a TLS certificate automatically via Let's Encrypt.
+#
+# For local testing without a public domain, use:
+#   http://localhost { reverse_proxy app:8000 }
+
+openoutreach.yourdomain.com {
+    reverse_proxy app:8000
+}
